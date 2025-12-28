@@ -1,23 +1,14 @@
 import os
-import discord, aiohttp
+import discord, aiohttp, asyncio
 from discord.ext import commands
 from discord import app_commands
 from keepalive import keep_alive
 
-# ==========================================================
-# tokens come from Render / .env (DO NOT PUT IN CODE)
-# ==========================================================
+# =========================[ BOT TOKENS ]=============================
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 PHI4_API_KEY = os.getenv("PHI4_API_KEY")
 
-if not DISCORD_BOT_TOKEN:
-    print("❌ Missing DISCORD_BOT_TOKEN in Render variables")
-if not PHI4_API_KEY:
-    print("❌ Missing PHI4_API_KEY in Render variables")
-
-# ==========================================================
-# server config
-# ==========================================================
+# =========================[ SERVER CONFIG ]===========================
 ASK_CHANNEL = 1454499949550239955
 
 CHANNELS = {
@@ -29,115 +20,118 @@ CHANNELS = {
     "mm_cat": 1438898941063205034
 }
 
-# ==========================================================
-# AI brain instructions
-# ==========================================================
 SYSTEM_CONTEXT = f"""
-You are TradeHub AI. Always answer confidently.
-Never say "I cannot answer". Never say "unsure".
-If asked about trust → send them to proof: <#{CHANNELS['proof_yes']}>
-If asked for vouches → <#{CHANNELS['vouches']}>
-If needs middleman → open middleman ticket.
-If thinks got scammed → open support ticket.
-If asked about trading → <#{CHANNELS['trade']}> or <#{CHANNELS['trade_media']}>
+You are TradeHub AI. Be confident, helpful, never say 'I cannot answer'.
+If trust questions → show proof & vouches.
+If scam/support → create support ticket.
+If trading help → send trading channels.
 """
 
-# ==========================================================
-# bot base
-# ==========================================================
+# =========================[ BOT SETUP ]==============================
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
+# =========================[ AI REQUEST ]==============================
+async def call_ai(prompt):
+    if not PHI4_API_KEY:
+        return fallback(prompt)
 
-# ==========================================================
-# AI request (NO COOKIE - FIXED HEADERS)
-# ==========================================================
-async def phi4(question):
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {PHI4_API_KEY}",
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://discord.com",     # REQUIRED
-        "X-Title": "TradeHub AI"                   # REQUIRED
+        "HTTP-Referer": "https://discord.com",
+        "X-Title": "TradeHub AI"
     }
     data = {
         "model": "meta-llama/llama-3.1-8b-instruct",
         "messages": [
             {"role": "system", "content": SYSTEM_CONTEXT},
-            {"role": "user", "content": question}
+            {"role": "user", "content": prompt}
         ]
     }
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, headers=headers, json=data) as res:
-            response = await res.json()
-            print("📩 API RESPONSE:", response)
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=data, timeout=8) as r:
+                res = await r.json()
+                if "choices" in res:
+                    return res["choices"][0]["message"]["content"]
+                return fallback(prompt)
+    except:
+        return fallback(prompt)
 
-            # If blocked → fail-safe reply
-            if "choices" not in response:
-                return "⚠️ AI is blocked right now, but I'm active. Ask again in a minute! 😊"
+# =========================[ FALLBACK BRAIN ]=========================
+def fallback(q):
+    q = q.lower()
 
-            return response["choices"][0]["message"]["content"]
+    if any(x in q for x in ["hi","hello","yo","hey"]):
+        return "Hey! 👋 How can I help you? Need trading, support or middleman?"
+
+    if "trade" in q:
+        return f"Trade here:\n🔁 <#{CHANNELS['trade']}>\n🖼️ <#{CHANNELS['trade_media']}>"
+
+    if "scam" in q or "support" in q:
+        return "If you need help or got scammed, say **open a support ticket**. 🛟"
+
+    if "legit" in q or "trust" in q or "fake" in q:
+        return f"Proof & vouches:\n✔️ <#{CHANNELS['vouches']}>\n📌 <#{CHANNELS['proof_yes']}>"
+
+    if "middleman" in q:
+        return "I can call a middleman for you — just ask to open a ticket. 🤝"
+
+    return "I'm active! Ask about trading, support, proof, or middleman. 😊"
 
 
-# ==========================================================
-# delete normal messages in /ask channel
-# ==========================================================
+# =========================[ AUTO DELETE ]============================
 @bot.event
 async def on_message(msg):
-    if msg.author.bot:
-        return
+    if msg.author.bot: return
     if msg.channel.id == ASK_CHANNEL and not msg.content.startswith("/ask"):
         await msg.delete()
-        await msg.channel.send("⚠️ Only `/ask` works here.", delete_after=3)
-        return
+        return await msg.channel.send("⚠️ Only `/ask` works here.", delete_after=2)
     await bot.process_commands(msg)
 
-
-# ==========================================================
-# /ask command (private replies)
-# ==========================================================
-@tree.command(name="ask", description="Ask TradeHub AI")
+# =========================[ /ASK COMMAND ]===========================
+@tree.command(name="ask", description="Ask TradeHub AI anything")
 async def ask(interaction: discord.Interaction, *, question: str):
 
+    # 📌 IMMEDIATE ACK TO PREVENT 404 ERROR
+    await interaction.response.defer(ephemeral=True)
+
     if interaction.channel.id != ASK_CHANNEL:
-        return await interaction.response.send_message(
-            f"⚠️ Use this in <#{ASK_CHANNEL}> only.",
-            ephemeral=True)
+        return await interaction.followup.send(
+            f"⚠️ Use `/ask` only in <#{ASK_CHANNEL}>.",
+            ephemeral=True
+        )
 
     q = question.lower()
 
-    # middleman ticket
-    if any(x in q for x in ["middleman", "need mm", "mm ticket", "call mm"]):
+    # 🎫 Middleman ticket
+    if "middleman" in q or "mm" in q:
         cat = interaction.guild.get_channel(CHANNELS["mm_cat"])
         ch = await cat.create_text_channel(f"mm-{interaction.user.name}")
-        return await interaction.response.send_message(
+        return await interaction.followup.send(
             f"🎫 Middleman ticket created: {ch.mention}", ephemeral=True)
 
-    # support ticket
-    if any(x in q for x in ["scam", "help", "support", "ticket"]):
+    # 🟩 Support ticket
+    if any(x in q for x in ["scam","help","ticket","support"]):
         cat = interaction.guild.get_channel(CHANNELS["support_cat"])
         ch = await cat.create_text_channel(f"support-{interaction.user.name}")
-        return await interaction.response.send_message(
+        return await interaction.followup.send(
             f"🟩 Support ticket created: {ch.mention}", ephemeral=True)
 
-    # AI answer
-    reply = await phi4(question)
-    return await interaction.response.send_message(reply, ephemeral=True)
+    # 🧠 AI or fallback
+    reply = await call_ai(question)
+    await interaction.followup.send(reply, ephemeral=True)
 
-
-# ==========================================================
-# ready event
-# ==========================================================
+# =========================[ READY ]==================================
 @bot.event
 async def on_ready():
     await tree.sync()
-    print("🔥 TradeHub AI is ONLINE")
+    print("🔥 BOT ONLINE & RESPONDING FAST (No 404, No crash)")
 
-
-# ==========================================================
-# RUN BOT
-# ==========================================================
+# =========================[ RUN ]====================================
 keep_alive()
 bot.run(DISCORD_BOT_TOKEN)
