@@ -5,18 +5,15 @@ from discord import app_commands
 from keepalive import keep_alive
 
 # =====================================================================
-# 🔑 TOKEN PLACEHOLDERS (SET IN RENDER / .env)
+# 🔑 TOKENS (SET THESE IN RENDER / .env - DO NOT PUT IN CODE)
 # =====================================================================
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")  # leave blank here
-PHI4_API_KEY = os.getenv("PHI4_API_KEY")            # leave blank here
-
+PHI4_API_KEY = os.getenv("PHI4_API_KEY")            # optional for future
 if not DISCORD_BOT_TOKEN:
-    print("❌ ERROR: DISCORD_BOT_TOKEN missing in ENV!")
-if not PHI4_API_KEY:
-    print("⚠️ PHI4_API_KEY missing (not required for scripted mode)")
+    print("❌ DISCORD_BOT_TOKEN missing in environment!")
 
 # =====================================================================
-# CONFIG
+# SERVER CONFIG
 # =====================================================================
 ASK_CHANNEL = 1454499949550239955
 
@@ -46,12 +43,11 @@ CH = {
     "proof yes": 1452840180888109067
 }
 
-intents = discord.Intents.all()
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
 tree = bot.tree
 
 # =====================================================================
-# AUTO DELETE TEXT IN ASK CHANNEL + SMART TICKET CREATION
+# ✋ AUTO DELETE IN ASK CHANNEL & OPEN TICKETS
 # =====================================================================
 @bot.event
 async def on_message(msg):
@@ -59,161 +55,129 @@ async def on_message(msg):
         return
     text = msg.content.lower()
 
-    # prevent chatting in ask channel
+    # Main channel lock
     if msg.channel.id == ASK_CHANNEL and not text.startswith("/ask"):
         await msg.delete()
         await msg.channel.send("⚠️ Use `/ask` here only.", delete_after=3)
         return
 
-    # MIDDLEMAN TICKET TRIGGERS (PRIORITY #1)
-    if any(x in text for x in [
-        "middleman ticket","open mm","create mm","need a middleman","call middleman",
-        "i need mm","mm ticket","send mm"
-    ]):
+    # 🎫 Middleman ticket trigger
+    if any(x in text for x in ["middleman ticket","open mm","create mm","need a middleman","mm ticket","call a middleman"]):
         guild = msg.guild
         category = guild.get_channel(MIDDLEMAN_CATEGORY_ID)
         username = msg.author.name.lower().replace(" ","-")
         num = random.randint(1000,9999)
-
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False),
             msg.author: discord.PermissionOverwrite(view_channel=True)
         }
-
         ch = await category.create_text_channel(f"mm-{username}-{num}", overwrites=overwrites)
         return await msg.reply(f"🎫 Middleman ticket created: {ch.mention}")
 
-    # SUPPORT TICKET TRIGGERS (PRIORITY #2)
-    if any(x in text for x in [
-        "support ticket","open support","help ticket","i need support","i got scammed","support me"
-    ]):
+    # 🟩 Support ticket trigger
+    if any(x in text for x in ["support ticket","i need support","help ticket","open support","got scammed","support me"]):
         guild = msg.guild
         category = guild.get_channel(SUPPORT_CATEGORY_ID)
         username = msg.author.name.lower().replace(" ","-")
         num = random.randint(1000,9999)
-
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False),
             msg.author: discord.PermissionOverwrite(view_channel=True)
         }
-
         ch = await category.create_text_channel(f"support-{username}-{num}", overwrites=overwrites)
         return await msg.reply(f"🟩 Support ticket created: {ch.mention}")
 
     await bot.process_commands(msg)
 
 # =====================================================================
-# /ASK MAIN COMMAND
+# 🤖 SMART BRAIN — UNDERSTANDS MEANING, NOT KEYWORDS ONLY
 # =====================================================================
-@tree.command(name="ask", description="Ask TradeHub AI — Scripted & Safe Replies.")
+legit_questions = [
+    "is this server legit","is this legit","can i trust this server","is trading safe here",
+    "is this real","are trades real here","can i trust you","this real or fake"
+]
+
+accusations = [
+    "this is scam","you scam","server fake","you guys fake","this is hit","hitter server",
+    "not legit","fraud","cheat","you will scam","you hit people"
+]
+
+# =====================================================================
+# /ASK — MAIN LOGIC
+# =====================================================================
+@tree.command(name="ask", description="Ask TradeHub AI — Smart & Controlled Replies.")
 async def ask(interaction: discord.Interaction, *, question: str):
     q = question.lower()
     user = interaction.user
 
-    # CHANNEL CHECK
     if interaction.channel.id != ASK_CHANNEL:
-        return await interaction.response.send_message(
-            f"⚠️ Use this in <#{ASK_CHANNEL}> only.", ephemeral=True
-        )
+        return await interaction.response.send_message(f"⚠️ Use `/ask` in <#{ASK_CHANNEL}> only.", ephemeral=True)
 
-    # ==================================
-    # BASIC GREETINGS
-    # ==================================
-    if q in ["hi","hello","hey","yo","sup","hola"]:
-        return await interaction.response.send_message(
-            random.choice(["Hey! 👋","Hello 😊","Yo ⚡","Hi there 💬"]),
-            ephemeral=True
-        )
+    # --- Greetings ---
+    if q in ["hi","hello","hey","yo","sup","hola","hi there"]:
+        return await interaction.response.send_message(random.choice([
+            "Hey 👋","Hello 😊","Yo ⚡","Hi there 💬"
+        ]), ephemeral=True)
 
-    # ==================================
-    # VERIFY COMMANDS (PRIORITY)
-    # ==================================
+    # --- Legit Check / Trust Questions ---
+    for phrase in legit_questions:
+        if phrase in q:
+            return await interaction.response.send_message(random.choice([
+                f"🛡 **Respectfully:** Yes — proof of real trades is public in <#{CH['middleman vouches']}> & <#{CH['proof yes']}>.",
+                f"📌 **Direct:** Claims don't matter — evidence does. Check <#{CH['middleman vouches']}> for yourself.",
+            ]), ephemeral=True)
+
+    # --- Accusations / Negative Claims ---
+    for phrase in accusations:
+        if phrase in q:
+            return await interaction.response.send_message(random.choice([
+                f"📌 Evidence speaks louder than accusations. Proof & transparency are public in <#{CH['middleman vouches']}>.",
+                f"🛡 Please check real proof before assuming — it's all visible in <#{CH['middleman vouches']}> & <#{CH['proof yes']}>.",
+            ]), ephemeral=True)
+
+    # --- Verify / Give Verified ---
     member = interaction.guild.get_role(ROLES["member only"]) in user.roles
     verified = interaction.guild.get_role(ROLES["verified trader"]) in user.roles
     mm = interaction.guild.get_role(ROLES["middleman"]) in user.roles
 
     if "/verify" in q:
-        if member:
-            return await interaction.response.send_message(
-                "🔐 `/verify` is old and no longer gives roles.",
-                ephemeral=True
-            )
         return await interaction.response.send_message(
-            "📩 `/verify` sends a verification request to staff.",
-            ephemeral=True
-        )
+            "🔐 `/verify` is old for members & does not give roles. Verified+ ranks use it for reviewer request.", ephemeral=True)
 
     if "/give_verified" in q:
         if member:
             return await interaction.response.send_message(
-                "⭐ `/give_verified` gives verified role **after real trading requirements only.**",
-                ephemeral=True
-            )
+                "⭐ `/give_verified` is the working command for verified role *after completing requirements*.", ephemeral=True)
         return await interaction.response.send_message(
-            "⚙️ `/give_verified` does nothing for your current role level.",
-            ephemeral=True
-        )
+            "⚙️ `/give_verified` does nothing for higher ranks — it's normal.", ephemeral=True)
 
-    # ==================================
-    # ROLE LOOKUP (SMART MATCH)
-    # ==================================
+    # --- Role Lookup (with co-owner fix) ---
     for name, role_id in ROLES.items():
-        # prevent "owner" activating inside "co-owner"
         if name == "co-owner" and "co-owner" in q:
             role = interaction.guild.get_role(role_id)
             members = [m.mention for m in role.members]
             return await interaction.response.send_message("\n".join(members), ephemeral=True)
 
-        # normal role lookup
-        if name in q and name != "owner":  # no wrong owner confusion
+        if name in q and name != "owner":  # avoids owner/co-owner confusion
             role = interaction.guild.get_role(role_id)
             members = [m.mention for m in role.members]
-            if not members:
-                return await interaction.response.send_message(
-                    f"No one currently has **{role.name}** ❌",
-                    ephemeral=True
-                )
             return await interaction.response.send_message(
-                f"**{role.name} Members:**\n" + "\n".join(members),
-                ephemeral=True
-            )
+                f"**{role.name} Members:**\n" + ("\n".join(members) if members else "None yet"), ephemeral=True)
 
-    # ==================================
-    # TRADING
-    # ==================================
+    # --- Trading ---
     if "trade" in q or "trading" in q:
         return await interaction.response.send_message(
-            f"🤝 Trade here: <#{CH['trading']}> or <#{CH['media trading']}>",
-            ephemeral=True
-        )
+            f"🤝 Trade in <#{CH['trading']}> or <#{CH['media trading']}> with a middleman for safety.", ephemeral=True)
 
-    # ==================================
-    # DEFENSIVE / CONFIDENT NEGATIVE RESPONSE
-    # ==================================
-    if any(x in q for x in ["scam","fake","hit","fraud","cheat","not legit"]):
-        replies = [
-            f"🛡 **Respectfully:** Proof is public in <#{CH['middleman vouches']}> & <#{CH['proof yes']}>. Please check before assuming.",
-            f"📌 **Direct:** Claims don't matter — evidence does. Proof is available in <#{CH['middleman vouches']}>."
-        ]
-        return await interaction.response.send_message(random.choice(replies), ephemeral=True)
-
-    # ==================================
-    # TIME / DATE
-    # ==================================
+    # --- Time / Date ---
     if any(x in q for x in ["time","date","day"]):
         now = datetime.datetime.now()
         return await interaction.response.send_message(
-            f"⏰ {now.strftime('%I:%M %p')} | {now.strftime('%A')} | {now.strftime('%d/%m/%Y')}",
-            ephemeral=True
-        )
+            f"⏰ {now.strftime('%I:%M %p')} | {now.strftime('%A')} | {now.strftime('%d/%m/%Y')}", ephemeral=True)
 
-    # ==================================
-    # DEFAULT FAIL-SAFE
-    # ==================================
+    # --- Default Fallback ---
     return await interaction.response.send_message(
-        "I cannot answer that. Ask something related to TradeHub only. 💬",
-        ephemeral=True
-    )
+        "I cannot answer that. Ask something related to TradeHub only. 💬", ephemeral=True)
 
 # =====================================================================
 # BOT READY
@@ -221,7 +185,7 @@ async def ask(interaction: discord.Interaction, *, question: str):
 @bot.event
 async def on_ready():
     await tree.sync()
-    print("🔥 TradeHub AI ONLINE — Defensive + Confident Mode Enabled")
+    print("🔥 TradeHub AI ONLINE — Smart Brain Enabled (Respectful + Confident Mode)")
 
 # =====================================================================
 # START BOT (RENDER SAFE)
