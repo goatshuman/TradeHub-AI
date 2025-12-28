@@ -5,19 +5,19 @@ from discord import app_commands
 from keepalive import keep_alive
 
 # =====================================================================
-# 🔑 TOKENS (SET IN RENDER / .env)
+# 🔑 TOKENS (SET IN RENDER / .env ONLY - DO NOT PUT IN CODE)
 # =====================================================================
-DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")  # leave blank here
-PHI4_API_KEY = os.getenv("PHI4_API_KEY")            # leave blank here
+DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+PHI4_API_KEY = os.getenv("PHI4_API_KEY")
 
 if not DISCORD_BOT_TOKEN:
-    print("❌ DISCORD_BOT_TOKEN missing in environment!")
+    print("❌ ERROR: DISCORD_BOT_TOKEN missing in Render/.env")
 
 if not PHI4_API_KEY:
-    print("⚠️ PHI4_API_KEY missing (bot will fail to think)")
+    print("⚠️ WARNING: PHI4_API_KEY missing - AI responses may fail")
 
 # =====================================================================
-# SERVER DATA THE AI MUST KNOW
+# SERVER CONFIG DATA (AI WILL USE THIS TO THINK)
 # =====================================================================
 ASK_CHANNEL = 1454499949550239955
 
@@ -48,49 +48,33 @@ CHANNELS = {
 }
 
 # =====================================================================
-# AI SYSTEM INSTRUCTIONS (BOT'S BRAIN)
+# 🎯 SYSTEM MESSAGE (AI BRAIN INSTRUCTIONS)
 # =====================================================================
 SYSTEM_CONTEXT = f"""
-You are TradeHub AI, a smart assistant for a Discord trading server.
-You must always help users within server rules.
-
-SERVER FACTS:
-- Only respond in favor of the server. Do not call it fake or scam.
-- If someone asks "is this server legit?" stay confident and direct them to proof channels.
-- Ticket creation happens when a user asks for help or a middleman.
-- Never reveal secret info or internal operations.
-- If a member asks about /verify or /give_verified:
-  - Members: old /verify does not give roles, /give_verified is used only after requirements.
-  - Verified Trader & Middleman+: those commands notify staff or are unnecessary.
+You are TradeHub AI, an assistant for a trading Discord server.
+Your responses must:
+- Support the server.
+- Never agree with scam accusations.
+- Direct users to proof channels when asked about trust: {CHANNELS['middleman_vouches']}, {CHANNELS['proof_yes']}
+- Create tickets when someone asks for help, scam support, or middleman.
+- Treat 'member only' role as the lowest level.
+- If unsure: ask for clarification, DO NOT say 'I cannot answer'.
 
 ROLES:
 {ROLES}
 
 CHANNELS:
 {CHANNELS}
-
-RESPONDING RULES:
-- Keep responses helpful, confident, and server-positive.
-- Never admit scams or wrongdoing.
-- If user is confused, guide them to correct channel or ticket.
-- If unsure, ask them to clarify rather than refusing.
-
-If user requests:
-- "middleman", "mm ticket", "i need mm" → create middleman ticket.
-- "support", "got scammed", "help me" → create support ticket.
-
-If a question is unclear, respond with something helpful, not "I cannot answer."
 """
 
 # =====================================================================
-# BOT SETUP
+# 🔥 BOT BASE
 # =====================================================================
-intents = discord.Intents.all()
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
 tree = bot.tree
 
 # =====================================================================
-# AI REQUEST FUNCTION
+# 🤖 AI REQUEST FUNCTION (FIXED, NO MORE "choices" ERROR)
 # =====================================================================
 async def ask_phi4(user_message):
     url = "https://openrouter.ai/api/v1/chat/completions"
@@ -98,9 +82,9 @@ async def ask_phi4(user_message):
         "Authorization": f"Bearer {PHI4_API_KEY}",
         "Content-Type": "application/json"
     }
-    
+
     data = {
-        "model": "openrouter/phi-4",
+        "model": "meta-llama/llama-3.1-8b-instruct",
         "messages": [
             {"role": "system", "content": SYSTEM_CONTEXT},
             {"role": "user", "content": user_message}
@@ -110,60 +94,68 @@ async def ask_phi4(user_message):
     async with aiohttp.ClientSession() as session:
         async with session.post(url, headers=headers, json=data) as r:
             response = await r.json()
+            print("📩 API RESPONSE:", response)  # log for debugging
+
+            # Error handling
+            if "error" in response:
+                return "⚠️ API error: " + str(response["error"])
+            if "choices" not in response:
+                return "⚠️ AI failed to answer. Check API key/model."
+
             return response["choices"][0]["message"]["content"]
 
 # =====================================================================
-# AUTO DELETE + TICKET HANDLING IN ASK CHANNEL
+# 💬 AUTO DELETE IN ASK CHANNEL
 # =====================================================================
 @bot.event
 async def on_message(msg):
     if msg.author.bot:
         return
-    
-    text = msg.content.lower()
-
-    if msg.channel.id == ASK_CHANNEL and not text.startswith("/ask"):
+    if msg.channel.id == ASK_CHANNEL and not msg.content.startswith("/ask"):
         await msg.delete()
-        await msg.channel.send("⚠️ Use /ask here only.", delete_after=3)
+        await msg.channel.send("⚠️ Only `/ask` is allowed here.", delete_after=3)
         return
-
     await bot.process_commands(msg)
 
 # =====================================================================
-# /ASK COMMAND (AI THINKING)
+# 💡 /ASK COMMAND (AI THINKING)
 # =====================================================================
-@tree.command(name="ask", description="Ask TradeHub AI (intelligent mode)")
+@tree.command(name="ask", description="Ask TradeHub AI (Brain Enabled)")
 async def ask(interaction: discord.Interaction, *, question: str):
     if interaction.channel.id != ASK_CHANNEL:
         return await interaction.response.send_message(
-            f"⚠️ Use this in <#{ASK_CHANNEL}> only.", ephemeral=True
+            f"⚠️ Use this command only in <#{ASK_CHANNEL}>.",
+            ephemeral=True
         )
 
     q = question.lower()
 
-    # Auto-create middleman ticket
-    if any(x in q for x in ["middleman ticket","need mm","open mm","i need a middleman"]):
+    # 🎫 Middleman Ticket
+    if any(x in q for x in ["middleman ticket","need mm","i need a middleman","call mm"]):
         category = interaction.guild.get_channel(CHANNELS["middleman_tickets"])
         ch = await category.create_text_channel(f"mm-{interaction.user.name.lower()}")
         return await interaction.response.send_message(f"🎫 Middleman ticket created: {ch.mention}", ephemeral=True)
 
-    # Auto-create support ticket
-    if any(x in q for x in ["support","got scammed","need help","open support","help ticket"]):
+    # 🟩 Support Ticket
+    if any(x in q for x in ["support","got scammed","help ticket","i need help","open support"]):
         category = interaction.guild.get_channel(CHANNELS["support_tickets"])
         ch = await category.create_text_channel(f"support-{interaction.user.name.lower()}")
         return await interaction.response.send_message(f"🟩 Support ticket created: {ch.mention}", ephemeral=True)
 
-    # Brain (LLM) answer
+    # 🧠 AI RESPONSE
     reply = await ask_phi4(question)
     return await interaction.response.send_message(reply, ephemeral=True)
 
 # =====================================================================
-# BOT READY + START
+# 🔛 BOT ONLINE
 # =====================================================================
 @bot.event
 async def on_ready():
     await tree.sync()
-    print("🔥 TradeHub AI (Phi-4 Brain) is online & thinking.")
+    print("🔥 TradeHub AI is online with brain mode enabled.")
 
+# =====================================================================
+# 🚀 RUN BOT
+# =====================================================================
 keep_alive()
 bot.run(DISCORD_BOT_TOKEN)
