@@ -5,10 +5,9 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "I'm alive!"  # ← Ping bots will read this
+    return "I'm alive!"  # This text is what ping/uptime bots see
 
 def run():
-    # This port MUST stay for Render Web Services
     app.run(host="0.0.0.0", port=10000)
 
 def keep_alive():
