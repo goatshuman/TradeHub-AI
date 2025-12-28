@@ -1,16 +1,16 @@
 import discord, os, random, datetime
 from discord.ext import commands
 from discord import app_commands
+from keepalive import keep_alive  # <<< ADDED FOR RENDER WEB SERVICE
 
 # =====================================================================
-# CONFIG - DO NOT REMOVE
+# CONFIG
 # =====================================================================
 ASK_CHANNEL = 1454499949550239955
 
 MIDDLEMAN_CATEGORY_ID = 1438898941063205034
 SUPPORT_CATEGORY_ID = 1438899881719631983
 
-# ROLES
 ROLES = {
     "owner": 1438892578580730027,
     "coowner": 1438894594254311504,
@@ -27,7 +27,6 @@ ROLES = {
     "member": 1439203750664470589
 }
 
-# CHANNELS
 CH = {
     "welcome": 1439885573799284798,
     "rules": 1439885040090615930,
@@ -50,18 +49,13 @@ bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
 tree = bot.tree
 
 # =====================================================================
-# SCRIPTED REPLIES
+# SCRIPTED RESPONSES ONLY
 # =====================================================================
 unknown = "I cannot answer that. Ask about TradeHub only. 💬"
 
-support_msgs = [
-    f"Open a support ticket here: <#{CH['request_middleman']}> 🎫",
-    f"If there's a problem, open a support ticket: <#{CH['request_middleman']}> 🎫",
-]
-
 trade_msgs = [
     f"Trade here: <#{CH['trading']}> and media trades: <#{CH['media_trading']}> 🤝",
-    f"Deals happen in <#{CH['trading']}> / <#{CH['media_trading']}> 🤝",
+    f"Deals happen here: <#{CH['trading']}> and <#{CH['media_trading']}> 🤝",
 ]
 
 scamproof = [
@@ -69,28 +63,31 @@ scamproof = [
 ]
 
 # =====================================================================
-# DELETE NORMAL CHAT IN ASK CHANNEL
+# DELETE ANY NON-/ask MESSAGES IN ASK CHANNEL
 # =====================================================================
 @bot.event
 async def on_message(message):
-    if message.author.bot: return
+    if message.author.bot:
+        return
     
     if message.channel.id == ASK_CHANNEL and not message.content.startswith("/ask"):
         await message.delete()
         await message.channel.send(f"Use /ask here only <#{ASK_CHANNEL}> 💬")
         return
     
-    # Ticket triggers
     text = message.content.lower()
 
-    if any(x in text for x in ["middleman ticket","mm ticket","open mm"]):
+    # ========================== MIDDLEMAN TICKET ==========================
+    if any(x in text for x in ["middleman ticket","mm ticket","open mm","create mm"]):
         guild = message.guild
         category = guild.get_channel(MIDDLEMAN_CATEGORY_ID)
         username = message.author.name.lower().replace(" ","-")
         num = random.randint(1000,9999)
 
-        overwrites = {guild.default_role: discord.PermissionOverwrite(view_channel=False),
-                      message.author: discord.PermissionOverwrite(view_channel=True)}
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            message.author: discord.PermissionOverwrite(view_channel=True)
+        }
         for role_id in ROLES.values():
             role = guild.get_role(role_id)
             if role: overwrites[role] = discord.PermissionOverwrite(view_channel=True)
@@ -99,14 +96,17 @@ async def on_message(message):
         await message.reply(f"🎫 Middleman ticket created: {ch.mention}")
         return
 
-    if any(x in text for x in ["support ticket","need support","open support"]):
+    # ========================== SUPPORT TICKET ==========================
+    if any(x in text for x in ["support ticket","need support","open support","help ticket"]):
         guild = message.guild
         category = guild.get_channel(SUPPORT_CATEGORY_ID)
         username = message.author.name.lower().replace(" ","-")
         num = random.randint(1000,9999)
 
-        overwrites = {guild.default_role: discord.PermissionOverwrite(view_channel=False),
-                      message.author: discord.PermissionOverwrite(view_channel=True)}
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            message.author: discord.PermissionOverwrite(view_channel=True)
+        }
         for role_id in ROLES.values():
             role = guild.get_role(role_id)
             if role: overwrites[role] = discord.PermissionOverwrite(view_channel=True)
@@ -118,7 +118,7 @@ async def on_message(message):
     await bot.process_commands(message)
 
 # =====================================================================
-# /ASK COMMAND (SCRIPTED ONLY)
+# /ASK COMMAND (SCRIPTED)
 # =====================================================================
 @tree.command(name="ask", description="Ask TradeHub AI (Scripted Only)")
 async def ask(interaction: discord.Interaction, *, question: str):
@@ -130,14 +130,14 @@ async def ask(interaction: discord.Interaction, *, question: str):
             f"Use /ask in <#{ASK_CHANNEL}> only 💬", ephemeral=True
         )
 
-    # Time request
+    # Time
     if any(x in q for x in ["time","day","date"]):
         now = datetime.datetime.now()
         return await interaction.response.send_message(
             f"{now.strftime('%I:%M %p')} • {now.strftime('%A')} • {now.strftime('%d/%m/%Y')} ⏰"
         )
 
-    # Roles
+    # User roles
     if "what roles do i have" in q:
         roles = [r.mention for r in user.roles if r.name != "@everyone"]
         return await interaction.response.send_message(f"Your roles: {', '.join(roles)} 👍")
@@ -149,32 +149,36 @@ async def ask(interaction: discord.Interaction, *, question: str):
             members = ", ".join([m.mention for m in role.members]) or "Nobody"
             return await interaction.response.send_message(f"{role.name}: {members} 👍")
 
-    # Middleman vouches
+    # Vouches
     if "vouch" in q:
         return await interaction.response.send_message(f"Middleman vouches: <#{CH['mm_vouches']}> 🧾")
 
-    # Scam proof
+    # Scam / legit
     if any(x in q for x in ["scam","fake","legit"]):
         return await interaction.response.send_message(random.choice(scamproof))
 
-    # Trading (OPTION A)
+    # Trading
     if "trade" in q:
         return await interaction.response.send_message(random.choice(trade_msgs))
 
-    # /verify + /give_verified
+    # Verify
     member = ROLES["member"] in [r.id for r in user.roles]
     verified_plus = any(r.id in [ROLES["verified"], ROLES["middleman"]] for r in user.roles)
 
     if "/verify" in q:
-        return await interaction.response.send_message(
-            "/verify is old for members. Verified+ = staff review request 👍"
-        )
+        if member:
+            return await interaction.response.send_message("/verify is old and doesn't give roles 👍")
+        if verified_plus:
+            return await interaction.response.send_message("/verify sends staff review request 👍")
 
+    # Give verified
     if "/give_verified" in q:
-        if member: return await interaction.response.send_message("/give_verified is used after requirements 👍")
-        if verified_plus: return await interaction.response.send_message("/give_verified does nothing for your level 👍")
+        if member:
+            return await interaction.response.send_message("/give_verified is used after requirements 👍")
+        if verified_plus:
+            return await interaction.response.send_message("/give_verified does nothing at your level 👍")
 
-    # Channels listing
+    # Channel list
     if "channels" in q:
         ch_list = "\n".join([f"<#{cid}>" for cid in CH.values()])
         return await interaction.response.send_message(ch_list + " 👍")
@@ -183,9 +187,12 @@ async def ask(interaction: discord.Interaction, *, question: str):
     return await interaction.response.send_message(unknown)
 
 # =====================================================================
+# BOOT SEQUENCE FOR RENDER
+# =====================================================================
 @bot.event
 async def on_ready():
     await tree.sync()
-    print("TradeHub AI ONLINE (100% SCRIPTED)")
+    print("🔥 TradeHub AI ONLINE (WEB SERVICE MODE)")
 
+keep_alive()  # <<< REQUIRED FOR RENDER WEB SERVICE
 bot.run(os.getenv("DISCORD_BOT_TOKEN"))
