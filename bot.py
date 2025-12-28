@@ -1,198 +1,190 @@
-import discord, os, random, datetime
-from discord.ext import commands
+import discord
 from discord import app_commands
-from keepalive import keep_alive  # <<< ADDED FOR RENDER WEB SERVICE
+from discord.ext import commands
+import random
+import aiohttp
+from datetime import datetime
 
-# =====================================================================
-# CONFIG
-# =====================================================================
-ASK_CHANNEL = 1454499949550239955
+# =====================================================
+# 🔑 FILL THESE YOURSELF
+# =====================================================
+TOKEN = "YOUR_DISCORD_BOT_TOKEN_HERE"
+PHI4_API_KEY = ""  # <--- leave blank & fill by yourself
 
-MIDDLEMAN_CATEGORY_ID = 1438898941063205034
-SUPPORT_CATEGORY_ID = 1438899881719631983
+SERVER_NAME = "TradeHub"
 
-ROLES = {
-    "owner": 1438892578580730027,
-    "coowner": 1438894594254311504,
-    "admin": 1438895119360065666,
-    "headcoord": 1444915199529324624,
-    "coord": 1444914892309139529,
-    "headmod": 1441060547700457584,
-    "mod": 1438895276419977329,
-    "headmanager": 1438895696936828928,
-    "manager": 1438895819125297274,
-    "headmm": 1438895916596592650,
-    "middleman": 1438896022590984295,
-    "verified": 1439203352406921377,
-    "member": 1439203750664470589
-}
+# =====================================================
+# 📌 CHANNEL IDS
+# =====================================================
+PROOF_YES = 1452840180888109067
+PROOF_POLL = 1452839052738039919
+REQ_MM = 1438899065952927917
+MM_VOUCHES = 1439598519471308861
 
-CH = {
-    "welcome": 1439885573799284798,
-    "rules": 1439885040090615930,
-    "giveaways": 1445035901561339925,
-    "games": 1451911322563252379,
-    "announcements": 1452292132349022271,
-    "are_legit": 1452839052738039919,
-    "proof_yes": 1452840180888109067,
-    "proof_no": 1452840053125546194,
-    "trading": 1439885826292056104,
-    "media_trading": 1451977865955639500,
-    "support_info": 1438900168006045907,
-    "middleman_info": 1438899017525362858,
-    "request_middleman": 1438899065952927917,
-    "vouch_format": 1439598483295309975,
-    "mm_vouches": 1439598519471308861
-}
+# TICKET CATEGORIES
+MM_TICKET_CATEGORY = 1438898941063205034
+SUPPORT_TICKET_CATEGORY = 1438899881719631983
 
-bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
+# =====================================================
+# 🎭 ROLE IDS
+# =====================================================
+OWNER = 1438892578580730027
+COOWNER = 1438894594254311504
+ADMIN = 1438895119360065666
+HEAD_CORD = 1444915199529324624
+CORD = 1444914892309139529
+HEAD_MOD = 1441060547700457584
+MOD = 1438895276419977329
+HEAD_MANAGER = 1438895696936828928
+MANAGER = 1438895819125297274
+HEAD_MM = 1438895916596592650
+MIDDLEMAN = 1438896022590984295
+VERIFIED = 1439203352406921377
+MEMBER = 1439203750664470589
+
+# =====================================================
+# 🧠 OPTIONAL PHI-4 (Controlled)
+# =====================================================
+async def phi4_scripted(question: str):
+    if PHI4_API_KEY == "":
+        return "❌ No Phi-4 key set. Please fill PHI4_API_KEY."
+
+    script = """
+    You are a scripted bot for a trading server.
+    Do not invent information. Do not guess.
+    Never guarantee trades. Always recommend a middleman.
+    """
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            "https://api.openai.com/v1/chat/completions",
+            json={
+                "model":"phi-4",
+                "messages":[
+                    {"role":"system","content":script},
+                    {"role":"user","content":question}
+                ]
+            },
+            headers={"Authorization":f"Bearer {PHI4_API_KEY}"}
+        ) as r:
+            data = await r.json()
+            return data["choices"][0]["message"]["content"]
+
+# =====================================================
+# 🤖 BOT SETUP
+# =====================================================
+intents = discord.Intents.default()
+intents.members = True
+intents.guilds = True
+bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
-# =====================================================================
-# SCRIPTED RESPONSES ONLY
-# =====================================================================
-unknown = "I cannot answer that. Ask about TradeHub only. 💬"
-
-trade_msgs = [
-    f"Trade here: <#{CH['trading']}> and media trades: <#{CH['media_trading']}> 🤝",
-    f"Deals happen here: <#{CH['trading']}> and <#{CH['media_trading']}> 🤝",
+# =====================================================
+# ROTATING REPLIES
+# =====================================================
+LEGIT_RESPONSES = [
+    f"✔️ This server is legit based on vouches & successful trades. Proof: <#{MM_VOUCHES}>",
+    f"🛡️ Yes, this server is considered legit. Always trade with a middleman.",
+    f"📌 Verified proof & trades shown in <#{MM_VOUCHES}> <#{PROOF_YES}>",
+    f"✨ We are legit based on history & proof. Trade safely with MM."
 ]
 
-scamproof = [
-    f"Proof is public here: <#{CH['mm_vouches']}> and <#{CH['proof_yes']}> 🛡️",
+PROOF_RESPONSES = [
+    f"📌 Proof: <#{MM_VOUCHES}> <#{PROOF_YES}>",
+    f"✔️ View vouches here: <#{MM_VOUCHES}>",
+    f"🛡️ MM + vouches = safety. Proof: <#{MM_VOUCHES}>",
+    f"📍 Confirmations: <#{MM_VOUCHES}> <#{PROOF_YES}>"
 ]
 
-# =====================================================================
-# DELETE ANY NON-/ask MESSAGES IN ASK CHANNEL
-# =====================================================================
-@bot.event
-async def on_message(message):
-    if message.author.bot:
-        return
-    
-    if message.channel.id == ASK_CHANNEL and not message.content.startswith("/ask"):
-        await message.delete()
-        await message.channel.send(f"Use /ask here only <#{ASK_CHANNEL}> 💬")
-        return
-    
-    text = message.content.lower()
+# =====================================================
+# ROLE CHECK
+# =====================================================
+def has_role(user, role_id):
+    return any(r.id == role_id for r in user.roles)
 
-    # ========================== MIDDLEMAN TICKET ==========================
-    if any(x in text for x in ["middleman ticket","mm ticket","open mm","create mm"]):
-        guild = message.guild
-        category = guild.get_channel(MIDDLEMAN_CATEGORY_ID)
-        username = message.author.name.lower().replace(" ","-")
-        num = random.randint(1000,9999)
+def role_list(member):
+    return [r.name for r in member.roles if r.name != "@everyone"]
 
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(view_channel=False),
-            message.author: discord.PermissionOverwrite(view_channel=True)
-        }
-        for role_id in ROLES.values():
-            role = guild.get_role(role_id)
-            if role: overwrites[role] = discord.PermissionOverwrite(view_channel=True)
-
-        ch = await category.create_text_channel(f"mm-{username}-{num}", overwrites=overwrites)
-        await message.reply(f"🎫 Middleman ticket created: {ch.mention}")
-        return
-
-    # ========================== SUPPORT TICKET ==========================
-    if any(x in text for x in ["support ticket","need support","open support","help ticket"]):
-        guild = message.guild
-        category = guild.get_channel(SUPPORT_CATEGORY_ID)
-        username = message.author.name.lower().replace(" ","-")
-        num = random.randint(1000,9999)
-
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(view_channel=False),
-            message.author: discord.PermissionOverwrite(view_channel=True)
-        }
-        for role_id in ROLES.values():
-            role = guild.get_role(role_id)
-            if role: overwrites[role] = discord.PermissionOverwrite(view_channel=True)
-
-        ch = await category.create_text_channel(f"support-{username}-{num}", overwrites=overwrites)
-        await message.reply(f"🟩 Support ticket created: {ch.mention}")
-        return
-
-    await bot.process_commands(message)
-
-# =====================================================================
-# /ASK COMMAND (SCRIPTED)
-# =====================================================================
-@tree.command(name="ask", description="Ask TradeHub AI (Scripted Only)")
-async def ask(interaction: discord.Interaction, *, question: str):
+# =====================================================
+# 🎯 /ask COMMAND
+# =====================================================
+@tree.command(name="ask", description="Ask the TradeHub bot something.")
+async def ask(interaction: discord.Interaction, question: str):
     q = question.lower()
-    user = interaction.user
+    guild = interaction.guild
 
-    if interaction.channel.id != ASK_CHANNEL:
+    # ---- LEGIT CHECK ----
+    if any(x in q for x in ["legit", "real", "trusted"]):
+        return await interaction.response.send_message(random.choice(LEGIT_RESPONSES), ephemeral=True)
+
+    # ---- PROOF CHECK ----
+    if "proof" in q or "vouches" in q:
+        return await interaction.response.send_message(random.choice(PROOF_RESPONSES), ephemeral=True)
+
+    # ---- TIME ----
+    if "time" in q:
+        current_time = datetime.now().strftime("%I:%M %p")
+        return await interaction.response.send_message(f"⏰ Current time: **{current_time}**", ephemeral=True)
+
+    # ---- DATE ----
+    if "date" in q or "today" in q:
+        today = datetime.now().strftime("%d-%m-%Y")
+        return await interaction.response.send_message(f"📅 Today’s date: **{today}**", ephemeral=True)
+
+    # ---- MY ROLES ----
+    if "my roles" in q:
         return await interaction.response.send_message(
-            f"Use /ask in <#{ASK_CHANNEL}> only 💬", ephemeral=True
-        )
+            f"🎭 Your roles: {', '.join(role_list(interaction.user))}", ephemeral=True)
 
-    # Time
-    if any(x in q for x in ["time","day","date"]):
-        now = datetime.datetime.now()
+    # ---- OTHER USER ROLES ----
+    if "roles of" in q or "what is @" in q:
+        target = None
+        for user in interaction.guild.members:
+            if user.mention in question or user.name.lower() in q:
+                target = user
+                break
+        if target:
+            return await interaction.response.send_message(
+                f"🎭 {target.display_name}'s roles: {', '.join(role_list(target))}", ephemeral=True)
+        return await interaction.response.send_message("❓ Mention a user.", ephemeral=True)
+
+    # ---- WHO IS OWNER / CO-OWNER ----
+    if "who is owner" in q or "owner?" in q:
+        owners = [m.mention for m in guild.members if has_role(m, OWNER)]
         return await interaction.response.send_message(
-            f"{now.strftime('%I:%M %p')} • {now.strftime('%A')} • {now.strftime('%d/%m/%Y')} ⏰"
-        )
+            f"👑 Owner: {', '.join(owners)}", ephemeral=True)
 
-    # User roles
-    if "what roles do i have" in q:
-        roles = [r.mention for r in user.roles if r.name != "@everyone"]
-        return await interaction.response.send_message(f"Your roles: {', '.join(roles)} 👍")
+    if "co-owner" in q or "co owner" in q:
+        co = [m.mention for m in guild.members if has_role(m, COOWNER)]
+        return await interaction.response.send_message(
+            f"🔱 Co-Owner: {', '.join(co)}", ephemeral=True)
 
-    # Who has role
-    for name, rid in ROLES.items():
-        if name.replace("_"," ") in q:
-            role = interaction.guild.get_role(rid)
-            members = ", ".join([m.mention for m in role.members]) or "Nobody"
-            return await interaction.response.send_message(f"{role.name}: {members} 👍")
+    # ---- WHO ARE MEMBERS ----
+    if "who are members" in q:
+        return await interaction.response.send_message(
+            "👥 There are too many members to mention individually.", ephemeral=True)
 
-    # Vouches
-    if "vouch" in q:
-        return await interaction.response.send_message(f"Middleman vouches: <#{CH['mm_vouches']}> 🧾")
+    # ---- OPEN MIDDLEMAN TICKET ----
+    if "make mm ticket" in q or "open mm" in q:
+        category = guild.get_channel(MM_TICKET_CATEGORY)
+        ticket = await guild.create_text_channel(f"mm-ticket-{interaction.user.name}", category=category)
+        return await interaction.response.send_message(f"🎫 Middleman ticket created: {ticket.mention}", ephemeral=True)
 
-    # Scam / legit
-    if any(x in q for x in ["scam","fake","legit"]):
-        return await interaction.response.send_message(random.choice(scamproof))
+    # ---- OPEN SUPPORT TICKET ----
+    if "make support" in q or "open support" in q:
+        category = guild.get_channel(SUPPORT_TICKET_CATEGORY)
+        ticket = await guild.create_text_channel(f"support-{interaction.user.name}", category=category)
+        return await interaction.response.send_message(f"📩 Support ticket created: {ticket.mention}", ephemeral=True)
 
-    # Trading
-    if "trade" in q:
-        return await interaction.response.send_message(random.choice(trade_msgs))
+    # ---- FALLBACK TO PHI-4 ----
+    ai = await phi4_scripted(question)
+    return await interaction.response.send_message(ai, ephemeral=True)
 
-    # Verify
-    member = ROLES["member"] in [r.id for r in user.roles]
-    verified_plus = any(r.id in [ROLES["verified"], ROLES["middleman"]] for r in user.roles)
-
-    if "/verify" in q:
-        if member:
-            return await interaction.response.send_message("/verify is old and doesn't give roles 👍")
-        if verified_plus:
-            return await interaction.response.send_message("/verify sends staff review request 👍")
-
-    # Give verified
-    if "/give_verified" in q:
-        if member:
-            return await interaction.response.send_message("/give_verified is used after requirements 👍")
-        if verified_plus:
-            return await interaction.response.send_message("/give_verified does nothing at your level 👍")
-
-    # Channel list
-    if "channels" in q:
-        ch_list = "\n".join([f"<#{cid}>" for cid in CH.values()])
-        return await interaction.response.send_message(ch_list + " 👍")
-
-    # Out of topic
-    return await interaction.response.send_message(unknown)
-
-# =====================================================================
-# BOOT SEQUENCE FOR RENDER
-# =====================================================================
+# =====================================================
+# 🚀 START BOT
+# =====================================================
 @bot.event
 async def on_ready():
     await tree.sync()
-    print("🔥 TradeHub AI ONLINE (WEB SERVICE MODE)")
+    print(f"{bot.user} is live in {SERVER_NAME}")
 
-keep_alive()  # <<< REQUIRED FOR RENDER WEB SERVICE
-bot.run(os.getenv("DISCORD_BOT_TOKEN"))
+bot.run(TOKEN)
